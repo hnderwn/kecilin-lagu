@@ -1,21 +1,25 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
 
+/**
+ * Variabel global untuk menyimpan instance FFmpeg agar bisa digunakan kembali.
+ */
 let ffmpeg = null;
 
-export const initFFmpeg = async (onProgress = () => {}) => {
+/**
+ * Inisialisasi FFmpeg WASM.
+ */
+export const initFFmpeg = async () => {
   if (ffmpeg) return ffmpeg;
 
   ffmpeg = new FFmpeg();
-  
+
+  // Menangkap log dari FFmpeg untuk debugging.
   ffmpeg.on('log', ({ message }) => {
     console.log('[FFmpeg Log]', message);
   });
 
-  ffmpeg.on('progress', ({ progress, time }) => {
-    onProgress(progress * 100);
-  });
-
+  // Memuat resource inti FFmpeg dari CDN.
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
   await ffmpeg.load({
     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -26,48 +30,75 @@ export const initFFmpeg = async (onProgress = () => {}) => {
 };
 
 /**
- * @param {File} file 
- * @param {Object} options
- * @param {string} options.format - 'm4a' | 'mp3' | 'opus'
- * @param {string} options.bitrate - e.g. '256k'
- * @returns {Promise<{data: Uint8Array, extension: string}>}
+ * Mengambil informasi file (terutama bitrate) sebelum konversi.
  */
-export const convertFlacToAac = async (file, options = { format: 'm4a', bitrate: '256k' }) => {
-  if (!ffmpeg) throw new Error('FFmpeg not initialized');
+export const getFileInfo = async (file) => {
+  if (!ffmpeg) await initFFmpeg();
 
-  const { format, bitrate } = options;
-  const inputName = 'input.flac';
-  const outputName = `output.${format}`;
+  const tempName = `info_${Math.random().toString(36).substr(2, 5)}`;
+  await ffmpeg.writeFile(tempName, await fetchFile(file));
 
-  // Write file to virtual FS
-  await ffmpeg.writeFile(inputName, await fetchFile(file));
+  let bitrate = 0;
+  const logHandler = ({ message }) => {
+    const match = message.match(/bitrate: (\d+) kb\/s/);
+    if (match) bitrate = parseInt(match[1]);
+  };
 
-  const args = [
-    '-i', inputName,
-    '-map_metadata', '0',
-    '-map', '0:a',
-    '-map', '0:v?',
-  ];
-
-  if (format === 'm4a') {
-    args.push('-c:a', 'aac', '-b:a', bitrate, '-c:v', 'copy');
-  } else if (format === 'mp3') {
-    args.push('-c:a', 'libmp3lame', '-b:a', bitrate, '-c:v', 'copy');
-  } else if (format === 'opus') {
-    // Opus in WebA container usually, or .opus
-    args.push('-c:a', 'libopus', '-b:a', bitrate, '-c:v', 'copy');
+  ffmpeg.on('log', logHandler);
+  try {
+    await ffmpeg.exec(['-i', tempName]);
+  } catch (e) {
+    // Error diharapkan karena tidak ada output file.
   }
+  ffmpeg.off('log', logHandler);
+  await ffmpeg.deleteFile(tempName);
 
-  args.push(outputName);
+  return { bitrate };
+};
 
-  await ffmpeg.exec(args);
+/**
+ * Konversi file audio ke format target.
+ * @param {File} file - File input.
+ * @param {Object} options - Pengaturan target.
+ * @param {Function} onProgress - Callback progres konversi.
+ */
+export const convertAudio = async (file, options = { format: 'm4a', bitrate: '256k' }, onProgress = () => {}) => {
+  if (!ffmpeg) await initFFmpeg();
 
-  // Read result
-  const data = await ffmpeg.readFile(outputName);
+  // Reset/pasang listener progres spesifik untuk file ini
+  const progressHandler = ({ progress }) => {
+    onProgress(progress * 100);
+  };
+  ffmpeg.on('progress', progressHandler);
 
-  // Cleanup virtual FS
-  await ffmpeg.deleteFile(inputName);
-  await ffmpeg.deleteFile(outputName);
+  try {
+    const { format, bitrate } = options;
+    const ext = file.name.split('.').pop().toLowerCase();
+    const inputName = `input_${Math.random().toString(36).substr(2, 5)}.${ext}`;
+    const outputName = `output_${Math.random().toString(36).substr(2, 5)}.${format}`;
 
-  return { data, extension: format };
+    await ffmpeg.writeFile(inputName, await fetchFile(file));
+
+    const args = ['-i', inputName, '-map_metadata', '0', '-map', '0:a', '-map', '0:v?'];
+
+    if (format === 'm4a') {
+      args.push('-c:a', 'aac', '-b:a', bitrate, '-c:v', 'copy');
+    } else if (format === 'mp3') {
+      args.push('-c:a', 'libmp3lame', '-b:a', bitrate, '-c:v', 'copy');
+    } else if (format === 'opus') {
+      args.push('-c:a', 'libopus', '-b:a', bitrate, '-c:v', 'copy');
+    }
+
+    args.push(outputName);
+    await ffmpeg.exec(args);
+
+    const data = await ffmpeg.readFile(outputName);
+    await ffmpeg.deleteFile(inputName);
+    await ffmpeg.deleteFile(outputName);
+
+    return { data, extension: format };
+  } finally {
+    // Lepaskan listener agar tidak bertumpuk atau salah target
+    ffmpeg.off('progress', progressHandler);
+  }
 };

@@ -1,4 +1,4 @@
-import { initFFmpeg, convertFlacToAac } from './ffmpegEngine';
+import { initFFmpeg, convertAudio } from './ffmpegEngine';
 import { triggerDownload } from '../utils/download';
 import { requestWakeLock, releaseWakeLock } from './wakeLock';
 
@@ -8,21 +8,22 @@ export class ConversionQueue {
     this.isProcessing = false;
     this.wakeLock = null;
     this.onStatusChange = () => {};
-    this.onFileComplete = () => {};
   }
 
   addFiles(files, options = { format: 'm4a', bitrate: '256k' }, autoStart = false) {
-    const newItems = Array.from(files).map(file => ({
+    const newItems = Array.from(files).map((file) => ({
       file,
       options,
       status: 'waiting',
       progress: 0,
-      id: Math.random().toString(36).substr(2, 9)
+      id: Math.random().toString(36).substr(2, 9),
     }));
     this.queue = [...this.queue, ...newItems];
+
     if (autoStart) {
       this.processNext();
     }
+
     this.onStatusChange(this.queue);
     return newItems;
   }
@@ -30,7 +31,7 @@ export class ConversionQueue {
   async processNext() {
     if (this.isProcessing || this.queue.length === 0) return;
 
-    const nextItem = this.queue.find(item => item.status === 'waiting');
+    const nextItem = this.queue.find((item) => item.status === 'waiting');
     if (!nextItem) {
       if (this.wakeLock) {
         releaseWakeLock(this.wakeLock);
@@ -41,31 +42,32 @@ export class ConversionQueue {
 
     this.isProcessing = true;
     nextItem.status = 'processing';
-    this.onStatusChange(this.queue);
+    this.onStatusChange([...this.queue]);
 
     try {
       if (!this.wakeLock) {
         this.wakeLock = await requestWakeLock();
       }
 
-      const ffmpeg = await initFFmpeg((progress) => {
-        nextItem.progress = progress;
+      // Memastikan FFmpeg siap
+      await initFFmpeg();
+
+      // Jalankan konversi dengan callback progres yang diikat langsung ke item ini
+      const { data, extension } = await convertAudio(nextItem.file, nextItem.options, (progressPercent) => {
+        nextItem.progress = progressPercent;
         this.onStatusChange([...this.queue]);
       });
 
-      const { data, extension } = await convertFlacToAac(nextItem.file, nextItem.options);
-      
-      const outputName = nextItem.file.name.replace(/\.[^/.]+$/, "") + `.${extension}`;
+      const outputName = nextItem.file.name.replace(/\.[^/.]+$/, '') + `.${extension}`;
       triggerDownload(data, outputName);
 
       nextItem.status = 'completed';
       nextItem.progress = 100;
     } catch (error) {
-      console.error('Conversion failed', error);
+      console.error('Konversi gagal:', error);
       nextItem.status = 'error';
     } finally {
       this.isProcessing = false;
-      this.onFileComplete(nextItem);
       this.onStatusChange([...this.queue]);
       this.processNext();
     }
