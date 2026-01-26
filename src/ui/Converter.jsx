@@ -124,7 +124,9 @@ const Converter = () => {
       <div className="glass-container">
         {/* HEADER */}
         <header className="app-header">
-          <span className="app-name">kecilin lagu</span>
+          <span className="app-name clickable" onClick={() => conversionQueue.clearQueue()}>
+            kecilin lagu
+          </span>
           <div className="header-actions">
             <div className="accent-trigger-wrapper">
               <button className="accent-btn" onClick={() => setShowAccentPicker(!showAccentPicker)} title="Ganti Warna Aksen"></button>
@@ -198,6 +200,9 @@ const Converter = () => {
                   {item.status === 'waiting' && 'waiting'}
                   {item.status === 'error' && 'error'}
                 </span>
+                <button className="queue-remove-btn" onClick={() => conversionQueue.removeItem(item.id)} disabled={item.status === 'processing'} title="Hapus dari antrean">
+                  &times;
+                </button>
               </div>
             ))}
           </div>

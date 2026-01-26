@@ -28,6 +28,22 @@ export class ConversionQueue {
     return newItems;
   }
 
+  removeItem(id) {
+    const item = this.queue.find((i) => i.id === id);
+    if (item && item.status === 'processing') return false; // Jangan hapus yang sedang jalan
+
+    this.queue = this.queue.filter((i) => i.id !== id);
+    this.onStatusChange([...this.queue]);
+    return true;
+  }
+
+  clearQueue() {
+    if (this.isProcessing) return false;
+    this.queue = [];
+    this.onStatusChange([]);
+    return true;
+  }
+
   async processNext() {
     if (this.isProcessing || this.queue.length === 0) return;
 
