@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { conversionQueue } from '../engine/queue';
-import { getFileInfo } from '../engine/ffmpegEngine';
+import { getFileInfo, setEngineStatusListener } from '../engine/ffmpegEngine';
 
 const Converter = () => {
   // --- State Aplikasi ---
@@ -11,6 +11,7 @@ const Converter = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [showAccentPicker, setShowAccentPicker] = useState(false);
   const [notification, setNotification] = useState(null);
+  const [engineStatus, setEngineStatus] = useState('idle'); // 'idle' | 'loading' | 'ready' | 'error'
 
   const fileInputRef = useRef(null);
 
@@ -37,6 +38,18 @@ const Converter = () => {
       const active = newQueue.some((item) => item.status === 'processing');
       setIsProcessing(active);
     };
+
+    // Listener untuk status FFmpeg Engine
+    setEngineStatusListener((status) => {
+      setEngineStatus(status);
+      if (status === 'ready') {
+        setNotification('Mesin siap! Konversi bisa dilakukan secara offline.');
+      } else if (status === 'loading') {
+        setNotification('Menyiapkan mesin untuk pertama kali (±30MB)...');
+      }
+    });
+
+    return () => setEngineStatusListener(null);
   }, []);
 
   // Menghilangkan notifikasi setelah beberapa detik.
@@ -158,8 +171,8 @@ const Converter = () => {
                     {(currentItem.file.size / (1024 * 1024)).toFixed(2)} MB • {currentItem.options.format.toUpperCase()}
                   </div>
                 </>
-              ) : isProcessing ? (
-                'Memuat Engine...'
+              ) : engineStatus === 'loading' ? (
+                <span className="loading-text">Menyiapkan Mesin...</span>
               ) : (
                 'Siap Menunggu'
               )}

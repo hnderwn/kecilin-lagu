@@ -5,6 +5,18 @@ import { fetchFile, toBlobURL } from '@ffmpeg/util';
  * Variabel global untuk menyimpan instance FFmpeg agar bisa digunakan kembali.
  */
 let ffmpeg = null;
+let loadStatus = 'idle'; // 'idle' | 'loading' | 'ready' | 'error'
+let onStatusUpdate = null;
+
+export const setEngineStatusListener = (callback) => {
+  onStatusUpdate = callback;
+  if (callback) callback(loadStatus);
+};
+
+const updateStatus = (status) => {
+  loadStatus = status;
+  if (onStatusUpdate) onStatusUpdate(status);
+};
 
 /**
  * Inisialisasi FFmpeg WASM.
@@ -12,21 +24,30 @@ let ffmpeg = null;
 export const initFFmpeg = async () => {
   if (ffmpeg) return ffmpeg;
 
-  ffmpeg = new FFmpeg();
+  updateStatus('loading');
 
-  // Menangkap log dari FFmpeg untuk debugging.
-  ffmpeg.on('log', ({ message }) => {
-    console.log('[FFmpeg Log]', message);
-  });
+  try {
+    ffmpeg = new FFmpeg();
 
-  // Memuat resource inti FFmpeg dari CDN.
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
+    // Menangkap log dari FFmpeg untuk debugging.
+    ffmpeg.on('log', ({ message }) => {
+      console.log('[FFmpeg Log]', message);
+    });
 
-  return ffmpeg;
+    // Memuat resource inti FFmpeg dari CDN.
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+
+    updateStatus('ready');
+    return ffmpeg;
+  } catch (error) {
+    updateStatus('error');
+    console.error('FFmpeg failed to load:', error);
+    throw error;
+  }
 };
 
 /**
