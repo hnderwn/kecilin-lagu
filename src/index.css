@@ -12,10 +12,13 @@
   box-sizing: border-box;
 }
 
+html {
+  background-color: var(--bg);
+}
+
 body {
   margin: 0;
   padding: 0;
-  background-color: var(--bg);
   color: var(--text-main);
   font-family:
     'Raleway',
@@ -341,6 +344,19 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.queue-format-tag {
+  font-size: 0.65rem;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+  font-weight: 800;
+  opacity: 0.8;
 }
 .badge-completed {
   color: #10b981;

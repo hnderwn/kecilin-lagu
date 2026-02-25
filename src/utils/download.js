@@ -4,7 +4,7 @@
  * @param {string} filename - Target filename
  * @param {string} mimeType - File mime type
  */
-export const triggerDownload = (data, filename, mimeType = 'audio/aac') => {
+export const triggerDownload = (data, filename, mimeType) => {
   const blob = new Blob([data], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -12,7 +12,7 @@ export const triggerDownload = (data, filename, mimeType = 'audio/aac') => {
   a.download = filename;
   document.body.appendChild(a);
   a.click();
-  
+
   // Cleanup
   setTimeout(() => {
     document.body.removeChild(a);

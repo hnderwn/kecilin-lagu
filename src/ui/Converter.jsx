@@ -17,12 +17,22 @@ const Converter = () => {
 
   // --- Konfigurasi Format ---
   const formatOptions = {
-    m4a: { label: 'AAC (.m4a)', bitrate: '256 kbps', value: '256k' },
-    mp3: { label: 'MP3', bitrate: '128 kbps', value: '128k' },
-    opus: { label: 'OPUS', bitrate: '128 kbps', value: '128k' },
+    m4a: {
+      label: 'AAC (.m4a)',
+      bitrates: ['128k', '160k', '192k', '256k', '320k'],
+      default: '256k',
+    },
+    mp3: {
+      label: 'MP3',
+      bitrates: ['128k', '160k', '192k', '256k'],
+      default: '128k',
+    },
   };
 
+  const [bitrate, setBitrate] = useState(formatOptions[format].default);
+
   const accents = [
+    { name: 'Gray', color: '#b2b2b2ff' },
     { name: 'Teal', color: '#14b8a6' },
     { name: 'Indigo', color: '#6366f1' },
     { name: 'Rose', color: '#f43f5e' },
@@ -77,7 +87,7 @@ const Converter = () => {
 
     conversionQueue.addFiles(files, {
       format: format,
-      bitrate: formatOptions[format].value,
+      bitrate: bitrate,
     });
   };
 
@@ -193,7 +203,10 @@ const Converter = () => {
             {items.map((item, index) => (
               <div key={item.id} className="queue-item">
                 <span className="queue-index">{(index + 1).toString().padStart(2, '0')}</span>
-                <span className="queue-name">{item.file.name}</span>
+                <span className="queue-name">
+                  {item.file.name}
+                  <span className="queue-format-tag">{item.options.format.toUpperCase()}</span>
+                </span>
                 <span className={`queue-status badge-${item.status}`}>
                   {item.status === 'completed' && 'done ✓'}
                   {item.status === 'processing' && 'converting'}
@@ -214,7 +227,20 @@ const Converter = () => {
           <div className="output-grid">
             <div className="output-item">
               <span className="label">Format:</span>
-              <select value={format} onChange={(e) => setFormat(e.target.value)} className="inline-select">
+              <select
+                value={format}
+                onChange={(e) => {
+                  const newFormat = e.target.value;
+                  const newBitrate = formatOptions[newFormat].default;
+                  setFormat(newFormat);
+                  setBitrate(newBitrate);
+                  conversionQueue.updateAllOptions({
+                    format: newFormat,
+                    bitrate: newBitrate,
+                  });
+                }}
+                className="inline-select"
+              >
                 {Object.keys(formatOptions).map((k) => (
                   <option key={k} value={k}>
                     {formatOptions[k].label}
@@ -223,8 +249,25 @@ const Converter = () => {
               </select>
             </div>
             <div className="output-item">
-              <span className="label">Bitrate Target:</span>
-              <span>{formatOptions[format].bitrate}</span>
+              <span className="label">Bitrate:</span>
+              <select
+                value={bitrate}
+                onChange={(e) => {
+                  const newBitrate = e.target.value;
+                  setBitrate(newBitrate);
+                  conversionQueue.updateAllOptions({
+                    format: format,
+                    bitrate: newBitrate,
+                  });
+                }}
+                className="inline-select"
+              >
+                {formatOptions[format].bitrates.map((b) => (
+                  <option key={b} value={b}>
+                    {b.replace('k', ' kbps')}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </section>

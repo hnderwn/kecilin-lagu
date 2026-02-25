@@ -44,6 +44,16 @@ export class ConversionQueue {
     return true;
   }
 
+  updateAllOptions(options) {
+    this.queue = this.queue.map((item) => {
+      if (item.status === 'waiting') {
+        return { ...item, options: { ...options } };
+      }
+      return item;
+    });
+    this.onStatusChange([...this.queue]);
+  }
+
   async processNext() {
     if (this.isProcessing || this.queue.length === 0) return;
 
@@ -69,13 +79,13 @@ export class ConversionQueue {
       await initFFmpeg();
 
       // Jalankan konversi dengan callback progres yang diikat langsung ke item ini
-      const { data, extension } = await convertAudio(nextItem.file, nextItem.options, (progressPercent) => {
+      const { data, extension, mimeType } = await convertAudio(nextItem.file, nextItem.options, (progressPercent) => {
         nextItem.progress = progressPercent;
         this.onStatusChange([...this.queue]);
       });
 
       const outputName = nextItem.file.name.replace(/\.[^/.]+$/, '') + `.${extension}`;
-      triggerDownload(data, outputName);
+      triggerDownload(data, outputName, mimeType);
 
       nextItem.status = 'completed';
       nextItem.progress = 100;
