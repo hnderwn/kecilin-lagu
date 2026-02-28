@@ -22,7 +22,7 @@ const updateStatus = (status) => {
  * Inisialisasi FFmpeg WASM.
  */
 export const initFFmpeg = async () => {
-  if (ffmpeg) return ffmpeg;
+  if (ffmpeg && loadStatus === 'ready') return ffmpeg;
 
   updateStatus('loading');
 
@@ -54,8 +54,18 @@ export const initFFmpeg = async () => {
   } catch (error) {
     updateStatus('error');
     console.error('FFmpeg failed to load:', error);
+    ffmpeg = null; // Reset agar bisa re-try
     throw error;
   }
+};
+
+/**
+ * Reset status mesin untuk inisialisasi ulang.
+ */
+export const resetEngine = () => {
+  ffmpeg = null;
+  updateStatus('idle');
+  initFFmpeg();
 };
 
 /**

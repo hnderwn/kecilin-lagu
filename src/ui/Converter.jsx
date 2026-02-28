@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { conversionQueue } from '../engine/queue';
-import { getFileInfo, setEngineStatusListener } from '../engine/ffmpegEngine';
+import { getFileInfo, setEngineStatusListener, initFFmpeg, resetEngine } from '../engine/ffmpegEngine';
 
 const Converter = () => {
   // --- State Aplikasi ---
@@ -49,13 +49,20 @@ const Converter = () => {
       setIsProcessing(active);
     };
 
+    // Jalankan inisialisasi awal
+    initFFmpeg().catch(() => {});
+
     // Listener untuk status FFmpeg Engine
     setEngineStatusListener((status) => {
       setEngineStatus(status);
       if (status === 'ready') {
-        setNotification('Mesin siap! Konversi bisa dilakukan secara offline.');
-      } else if (status === 'loading') {
-        setNotification('Menyiapkan mesin untuk pertama kali (±30MB)...');
+        const hasLoadedBefore = localStorage.getItem('engine_loaded');
+        if (hasLoadedBefore) {
+          setNotification('Mesin siap! Konversi bisa dilakukan secara offline.');
+        } else {
+          setNotification('Engine berhasil diunduh. Selamat datang!');
+          localStorage.setItem('engine_loaded', 'true');
+        }
       }
     });
 
@@ -106,6 +113,54 @@ const Converter = () => {
     conversionQueue.processNext();
   };
 
+  // --- Sub Komponen ---
+  const LoadingOverlay = () => {
+    if (engineStatus !== 'loading' && engineStatus !== 'error') return null;
+
+    return (
+      <div className="loading-overlay">
+        <div className="loading-card">
+          {engineStatus === 'loading' ? (
+            <>
+              <div className="spinner"></div>
+              <h2 className="loading-text">Menyiapkan Mesin</h2>
+              <p style={{ opacity: 0.7, fontSize: '0.9rem', marginTop: '12px' }}>
+                Sedang menyiapkan modul FFmpeg (±30MB).
+                <br />
+                Hanya dilakukan saat awal atau pembaruan sistem.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="engine-error-icon">⚠️</div>
+              <h2 style={{ color: '#f43f5e' }}>Gagal Memuat Mesin</h2>
+              <p style={{ opacity: 0.7, fontSize: '0.9rem', margin: '12px 0 24px' }}>Koneksi terinterupsi atau browser tidak mendukung WebAssembly.</p>
+              <button className="btn btn-primary" onClick={() => resetEngine()}>
+                Coba Lagi
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const EngineBadge = () => {
+    const statusText = {
+      ready: 'Mesin Aktif',
+      loading: 'Mengunduh...',
+      error: 'Mesin Galat',
+      idle: 'Memulai...',
+    };
+
+    return (
+      <div className="engine-badge" onClick={() => engineStatus === 'error' && resetEngine()}>
+        <div className={`dot dot-${engineStatus}`}></div>
+        <span>{statusText[engineStatus]}</span>
+      </div>
+    );
+  };
+
   // --- Variabel Render ---
   const currentItem = items.find((item) => item.status === 'processing');
   const hasFiles = items.length > 0;
@@ -114,11 +169,12 @@ const Converter = () => {
   if (!hasFiles && !isDragging) {
     return (
       <div className="app-shell landing" style={{ '--accent': accentColor }}>
+        <LoadingOverlay />
         <div className="drop-zone-full" onClick={() => fileInputRef.current.click()} onDragOver={onDragOver}>
           <div className="landing-content">
             <h1 className="landing-title">kecilin lagu</h1>
-            <p className="landing-sub">Drop audio file di sini atau klik untuk memilih</p>
-            <div className="supported-formats">FLAC • MP3 • M4A • WAV • OGG • OPUS • ALAC • AIFF</div>
+            <p className="landing-sub">Lepaskan audio di sini atau klik untuk memilih</p>
+            <div className="supported-formats">FLAC • MP3 • M4A • WAV • OGG • ALAC • AIFF</div>
           </div>
           <input type="file" multiple accept="audio/*" ref={fileInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
         </div>
@@ -128,6 +184,7 @@ const Converter = () => {
 
   return (
     <div className={`app-shell ${isDragging ? 'dragging' : ''}`} onDragOver={onDragOver} onDragLeave={() => setIsDragging(false)} onDrop={onDrop} style={{ '--accent': accentColor }}>
+      <LoadingOverlay />
       {/* Notifikasi Ringan */}
       {notification && <div className="toast-notification">{notification}</div>}
 
@@ -138,6 +195,7 @@ const Converter = () => {
             kecilin lagu
           </span>
           <div className="header-actions">
+            <EngineBadge />
             <div className="accent-trigger-wrapper">
               <button className="accent-btn" onClick={() => setShowAccentPicker(!showAccentPicker)} title="Ganti Warna Aksen"></button>
               {showAccentPicker && (
@@ -163,10 +221,10 @@ const Converter = () => {
         {/* CONTROL AREA */}
         <section className="control-area">
           <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()}>
-            Add Files
+            Tambah File
           </button>
           <button className="btn btn-primary" disabled={isProcessing || !items.some((i) => i.status === 'waiting')} onClick={startConversion}>
-            Start Convert
+            Mulai Kompresi
           </button>
           <input type="file" multiple accept="audio/*" ref={fileInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
         </section>
@@ -178,7 +236,7 @@ const Converter = () => {
             <div className="current-track">
               {currentItem ? (
                 <>
-                  Encoding {currentItem.file.name}
+                  Memproses: {currentItem.file.name}
                   <div className="track-detail-small">
                     {(currentItem.file.size / (1024 * 1024)).toFixed(2)} MB • {currentItem.options.format.toUpperCase()}
                   </div>
@@ -186,7 +244,7 @@ const Converter = () => {
               ) : engineStatus === 'loading' ? (
                 <span className="loading-text">Menyiapkan Mesin...</span>
               ) : (
-                'Siap Menunggu'
+                'Mesin Siap'
               )}
             </div>
             <div className="progress-container">
@@ -198,7 +256,7 @@ const Converter = () => {
 
         {/* FILE QUEUE */}
         <section className="queue-area">
-          <div className="section-title">FILE QUEUE</div>
+          <div className="section-title">ANTREAN FILE</div>
           <div className="queue-list">
             {items.map((item, index) => (
               <div key={item.id} className="queue-item">
@@ -208,10 +266,10 @@ const Converter = () => {
                   <span className="queue-format-tag">{item.options.format.toUpperCase()}</span>
                 </span>
                 <span className={`queue-status badge-${item.status}`}>
-                  {item.status === 'completed' && 'done ✓'}
-                  {item.status === 'processing' && 'converting'}
-                  {item.status === 'waiting' && 'waiting'}
-                  {item.status === 'error' && 'error'}
+                  {item.status === 'completed' && 'selesai ✓'}
+                  {item.status === 'processing' && 'memproses'}
+                  {item.status === 'waiting' && 'menunggu'}
+                  {item.status === 'error' && 'galat'}
                 </span>
                 <button className="queue-remove-btn" onClick={() => conversionQueue.removeItem(item.id)} disabled={item.status === 'processing'} title="Hapus dari antrean">
                   &times;
@@ -223,7 +281,7 @@ const Converter = () => {
 
         {/* OUTPUT SETTINGS & INFO */}
         <section className="output-area">
-          <div className="section-title">OUTPUT & INFO</div>
+          <div className="section-title">PENGATURAN & INFO</div>
           <div className="output-grid">
             <div className="output-item">
               <span className="label">Format:</span>
