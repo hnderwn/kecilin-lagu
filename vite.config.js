@@ -37,6 +37,10 @@ export default defineConfig({
           },
         ],
       },
+      workbox: {
+        maximumFileSizeToCacheInBytes: 40 * 1024 * 1024, // Set limit ke 40MB agar WASM (32MB) bisa masuk cache
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,wasm}'], // Sertakan .wasm dalam caching
+      },
     }),
   ],
   server: {
