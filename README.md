@@ -1,282 +1,69 @@
-# FLAC → AAC Web Converter — Catatan Produksi (Internal)
+# Kecilin Lagu — Audio Converter PWA
 
-> Dokumen ini **khusus untuk developer / produksi**.
-> Bukan dokumentasi user. Dibuat biar gampang dirawat, di-tweak, dan nggak kejebak bug aneh di device kentang.
-
----
-
-## Tujuan Build
-
-Web app untuk **convert FLAC ke AAC** langsung di browser menggunakan **FFmpeg WebAssembly** dengan karakter:
-
-* Client-side processing (tanpa server)
-* Batch kecil (±10–20 lagu / album)
-* Stabil di Android low-end
-* Fokus ke kebutuhan personal
-
-Non-goal:
-
-* Background processing
-* Batch ratusan file
-* Multi-format converter
-* Skalabilitas user publik
+**Kecilin Lagu** adalah aplikasi web modern (PWA) untuk mengompresi dan mengonversi file audio secara massal langsung di dalam browser. Aplikasi ini dirancang dengan estetika **Brutalist × Terminal** yang raw dan fungsional, memberikan pengalaman konversi yang cepat, aman, dan privat.
 
 ---
 
-## Arsitektur Tingkat Tinggi
+## ⚡ Fitur Utama
 
-```
-Browser / PWA (Foreground ONLY)
- ├─ React UI (minimal)
- ├─ Conversion Engine (Vanilla JS)
- │   ├─ FFmpeg WASM Runtime
- │   └─ Serial Job Queue
- ├─ Virtual FS (in-memory)
- ├─ Wake Lock (screen on)
- └─ Service Worker (cache asset)
-
-Vercel
- └─ Static Asset Hosting
-```
-
-Prinsip utama:
-
-> **Selama proses konversi, app HARUS tetap terbuka di foreground.**
+- **100% Client-Side**: Proses konversi terjadi sepenuhnya di perangkat Anda menggunakan **FFmpeg WASM**. File Anda tidak pernah diunggah ke server.
+- **Dukungan Format Luas**: Mendukung input dari berbagai format audio (FLAC, WAV, MP3, M4A, OGG) bahkan ekstraksi audio dari video.
+- **Smart Adaptive Artwork**: Secara otomatis menyesuaikan ukuran album art berdasarkan bitrate yang dipilih (500px - 800px) untuk menjaga kualitas visual tetap proporsional.
+- **Batch Processing**: Masukkan ratusan file sekaligus ke dalam antrean (Tracklist) dan biarkan aplikasi menyelesaikannya satu per satu.
+- **Dukungan PWA & Offline**: Install aplikasi ke desktop atau HP. Berkat self-hosted WASM, aplikasi tetap bisa bekerja tanpa koneksi internet setelah muatan pertama.
+- **Theatrical Pane**: Mode visualisasi cakram vinyl yang berputar saat proses konversi berlangsung, memberikan pengalaman auditif-visual yang unik.
+- **Engine Recycling**: Sistem otomatis mendaur ulang engine FFmpeg setiap 15 file untuk memastikan penggunaan RAM tetap stabil dan mencegah crash pada antrean panjang.
 
 ---
 
-## Tech Stack
+## 🛠️ Arsitektur & Sistem
 
-### Frontend
+### 1. FFmpeg WASM (Engine)
 
-* React (UI only)
-* Vanilla JS untuk engine
-* ES Modules
+Aplikasi ini menggunakan modul FFmpeg yang dikompilasi ke WebAssembly. Kami menggunakan teknik **Self-Hosting** di folder `public/` untuk memastikan stabilitas dan kecepatan akses, menghindari ketergantungan pada CDN luar.
 
-Catatan penting:
+### 2. Service Worker & Caching (PWA)
 
-* React **tidak** menyimpan buffer audio
-* Semua proses berat ada di layer non-React
+Menggunakan **Vite PWA Plugin** dengan konfigurasi **Workbox** yang ditingkatkan. Limit cache dinaikkan hingga **40MB** untuk menampung file `.wasm` yang besar, memungkinkan aplikasi berjalan 100% offline.
 
----
+### 3. Screen Wake Lock API
 
-### Build Tool
+Saat melakukan konversi massal yang memakan waktu lama, aplikasi menggunakan **Wake Lock API** untuk mencegah perangkat masuk ke mode tidur (sleep), memastikan proses konversi tidak terputus di tengah jalan.
 
-* Vite
+### 4. Throttling UI Adaptif
 
-Digunakan untuk:
+Sistem antrean memiliki logika throttling yang cerdas:
 
-* Dev server
-* Static build
-* Asset bundling
+- **Antrean < 25 file**: Update progres setiap 150ms (visual sangat halus).
+- **Antrean > 25 file**: Update progres setiap 500ms (menghemat daya CPU untuk prioritas konversi).
 
 ---
 
-### Media Engine
+## 🚀 Alur Kerja Aplikasi
 
-* `@ffmpeg/ffmpeg`
-* `@ffmpeg/util`
-
-Execution model:
-
-* Satu instance FFmpeg
-* Proses **serial (satu file per waktu)**
-* Cleanup eksplisit tiap file
+1.  **Drop & Select**: Pengguna menyeret file ke area Brutalist Landing.
+2.  **Konfigurasi**: Memilih format target (MP3/M4A) dan bitrate melalui pengaturan terminal.
+3.  **Antrean (Tracklist)**: File masuk ke daftar tunggu dengan ID unik.
+4.  **Konversi Massal**: Engine memproses file satu per satu, mengompresinya, menyesuaikan album art, dan memicu unduhan otomatis sesaat setelah selesai.
+5.  **Clean-up**: Setelah file diproses, memori virtual FFmpeg dibersihkan segera untuk menjaga performa.
 
 ---
 
-### Hosting
+## 💻 Cara Menjalankan Secara Lokal
 
-* Vercel (static only)
-* Tidak menggunakan Serverless / Edge Function
-
----
-
-## Konsep WASM (Sudut Pandang Produksi)
-
-* WASM = binary native (C/C++) yang jalan di browser
-* FFmpeg dikompilasi via Emscripten
-* Jalan di sandbox dengan memory heap sendiri
-
-Implikasi:
-
-* Memory usage besar itu normal
-* GC tidak instan
-* Cleanup manual itu WAJIB
+1. Clone repositori:
+   ```bash
+   git clone https://github.com/hnderwn/kecilin-lagu.git
+   ```
+2. Install dependensi:
+   ```bash
+   npm install
+   ```
+3. Jalankan server pengembangan:
+   ```bash
+   npm run dev
+   ```
 
 ---
 
-## Resource Budget (Target Realistis)
-
-### Device Target
-
-* Android RAM 3–4 GB
-* Browser: Chrome
-
-### Estimasi Peak Memory
-
-| Komponen          | Perkiraan      |
-| ----------------- | -------------- |
-| FFmpeg WASM Heap  | 128 MB         |
-| Decode FLAC (PCM) | 40–80 MB       |
-| Output AAC Buffer | 5–10 MB        |
-| JS + UI Overhead  | ±20 MB         |
-| **Total Peak**    | **200–300 MB** |
-
-Hard rule:
-
-* ❌ Tidak ada parallel processing
-* ❌ Tidak simpan banyak file di memory bersamaan
-
----
-
-## Serial Processing (WAJIB)
-
-### Definisi
-
-Serial processing = **satu file diproses sampai selesai sebelum lanjut file berikutnya**.
-
-DILARANG:
-
-* `Promise.all()`
-* Parallel FFmpeg execution
-
-ALUR WAJIB:
-
-```
-FLAC 1 → convert → download → cleanup
-FLAC 2 → convert → download → cleanup
-...
-```
-
-Tujuan:
-
-* Menjaga RAM stabil
-* Mencegah tab freeze
-* Aman untuk Android murah
-
----
-
-## Auto Download (WAJIB)
-
-Setiap file yang selesai:
-
-1. Output AAC langsung di-trigger download
-2. Tidak menunggu batch selesai
-3. File input & output langsung dihapus dari FS
-
-Manfaat:
-
-* Kalau app mati di tengah jalan, hasil sebelumnya aman
-* Tidak perlu ZIP output (hemat RAM)
-
----
-
-## Wake Lock (WAJIB)
-
-### Kenapa?
-
-* Android sering mematikan tab saat screen off
-* WASM job panjang rawan dibunuh OS
-
-### Kebijakan
-
-* Aktifkan **Wake Lock API** saat proses konversi
-* Lepaskan Wake Lock setelah semua job selesai
-
-Catatan:
-
-* Wake Lock bukan jaminan 100%
-* Tapi sangat mengurangi risiko proses mati
-
----
-
-## Service Worker (Langsung Dipakai)
-
-### Tujuan
-
-* WASM hanya download sekali
-* Bisa jalan offline setelah load pertama
-
-### Cache Strategy
-
-* Cache First:
-
-  * `ffmpeg-core.wasm`
-  * `ffmpeg-core.js`
-* Network First:
-
-  * UI JS / HTML
-
----
-
-## Struktur Folder Produksi
-
-```
-/public
-  /ffmpeg
-    ffmpeg-core.js
-    ffmpeg-core.wasm
-  sw.js
-  manifest.json
-
-/src
-  /engine
-    ffmpegEngine.js     // logic konversi & WASM
-    queue.js            // serial processing
-    wakeLock.js         // Wake Lock handler
-  /ui
-    Converter.jsx
-  /utils
-    download.js
-    deviceCheck.js
-  App.jsx
-  main.jsx
-```
-
-Prinsip:
-
-* `engine/` tidak bergantung React
-* UI hanya kirim command & terima progress
-
----
-
-## Batasan Produksi (Hard Limit)
-
-* Max file per batch: 20
-* Proses hanya di foreground
-* Tidak ada resume otomatis
-* Tidak ada background processing
-
----
-
-## Failure Mode & Mitigasi
-
-| Risiko        | Mitigasi               |
-| ------------- | ---------------------- |
-| Screen mati   | Wake Lock              |
-| RAM habis     | Serial + cleanup       |
-| App ke-reload | Auto download per file |
-| WASM reload   | Service Worker cache   |
-
----
-
-## PWA Notes
-
-* PWA **harus tetap terbuka** saat proses jalan
-* Background processing tidak didukung
-* Cocok untuk sesi konversi pendek (album)
-
----
-
-## Filosofi Build
-
-> Tool ini dibuat untuk **dipakai**, bukan dipamerkan.
-> Selama stabil, jujur ke constraint, dan nggak bikin HP KO — itu sudah benar.
-
----
-
-## Status
-
-Arsitektur final untuk MVP personal.
-Siap implementasi.
+_Dibuat dengan ❤️ untuk privasi dan efisiensi audio._
