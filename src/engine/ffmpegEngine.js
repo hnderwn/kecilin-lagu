@@ -35,11 +35,14 @@ export const initFFmpeg = async () => {
       console.log('[FFmpeg Log]', message);
     });
 
-    // Memuat resource inti FFmpeg dari CDN.
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+    // Memuat resource inti FFmpeg dari file lokal (public folder)
+    // Ini lebih stabil untuk PWA dan mendukung mode offline berkala.
+    const coreURL = await toBlobURL('/ffmpeg-core.js', 'text/javascript');
+    const wasmURL = await toBlobURL('/ffmpeg-core.wasm', 'application/wasm');
+
     await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      coreURL,
+      wasmURL,
     });
 
     // Ekspos ke global untuk debugging di console (window.ff)
@@ -59,13 +62,25 @@ export const initFFmpeg = async () => {
   }
 };
 
-/**
- * Reset status mesin untuk inisialisasi ulang.
- */
 export const resetEngine = () => {
   ffmpeg = null;
   updateStatus('idle');
   initFFmpeg();
+};
+
+/**
+ * Mematikan engine FFmpeg secara total untuk mengosongkan memori.
+ */
+export const terminateEngine = async () => {
+  if (ffmpeg) {
+    try {
+      await ffmpeg.terminate();
+    } catch (e) {
+      console.warn('Gagal terminate engine:', e);
+    }
+    ffmpeg = null;
+    updateStatus('idle');
+  }
 };
 
 /**
@@ -159,16 +174,19 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '25
       mp3: 'audio/mpeg',
     };
 
-    return {
+    const result = {
       data,
       extension: format,
       mimeType: mimeTypes[format] || 'application/octet-stream',
     };
+
+    // Bersihkan buffer lokal segera setelah dipindahkan ke result
+    return result;
   } catch (err) {
     console.error('[FFmpeg Error Detail]', err);
     throw err;
   } finally {
     // Lepaskan listener agar tidak bertumpuk atau salah target
-    ffmpeg.off('progress', progressHandler);
+    if (ffmpeg) ffmpeg.off('progress', progressHandler);
   }
 };

@@ -1,4 +1,4 @@
-import { initFFmpeg, convertAudio } from './ffmpegEngine';
+import { initFFmpeg, convertAudio, terminateEngine } from './ffmpegEngine';
 import { triggerDownload } from '../utils/download';
 import { requestWakeLock, releaseWakeLock } from './wakeLock';
 
@@ -6,8 +6,10 @@ export class ConversionQueue {
   constructor() {
     this.queue = [];
     this.isProcessing = false;
+    this.processedCount = 0; // Hitung file yang sudah diproses untuk recycle engine
     this.wakeLock = null;
     this.onStatusChange = () => {};
+    this.lastUpdate = 0; // Untuk throttle progress
   }
 
   addFiles(files, options = { format: 'm4a', bitrate: '256k' }, autoStart = false) {
@@ -81,7 +83,15 @@ export class ConversionQueue {
       // Jalankan konversi dengan callback progres yang diikat langsung ke item ini
       const { data, extension, mimeType } = await convertAudio(nextItem.file, nextItem.options, (progressPercent) => {
         nextItem.progress = progressPercent;
-        this.onStatusChange([...this.queue]);
+
+        // Throttling adaptif: jika antrean panjang (>25), kurangi update ke 500ms untuk menghemat CPU
+        const throttleInterval = this.queue.length > 25 ? 500 : 150;
+
+        const now = Date.now();
+        if (now - this.lastUpdate > throttleInterval) {
+          this.onStatusChange([...this.queue]);
+          this.lastUpdate = now;
+        }
       });
 
       const outputName = nextItem.file.name.replace(/\.[^/.]+$/, '') + `.${extension}`;
@@ -89,6 +99,14 @@ export class ConversionQueue {
 
       nextItem.status = 'completed';
       nextItem.progress = 100;
+      this.processedCount++;
+
+      // Engine Recycling: Tiap 15 file, matikan engine & nyalakan lagi untuk bersihkan RAM
+      if (this.processedCount >= 15) {
+        console.log('[Queue] Mendaur ulang engine untuk membersihkan memori...');
+        await terminateEngine();
+        this.processedCount = 0;
+      }
     } catch (error) {
       console.error('Konversi gagal:', error);
       nextItem.status = 'error';
