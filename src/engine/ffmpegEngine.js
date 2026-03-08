@@ -93,21 +93,35 @@ export const getFileInfo = async (file) => {
   await ffmpeg.writeFile(tempName, await fetchFile(file));
 
   let bitrate = 0;
+  let title = '';
+  let artist = '';
+  let album = '';
+
   const logHandler = ({ message }) => {
-    const match = message.match(/bitrate: (\d+) kb\/s/);
-    if (match) bitrate = parseInt(match[1]);
+    // Cari Bitrate
+    const brMatch = message.match(/bitrate: (\d+) kb\/s/);
+    if (brMatch) bitrate = parseInt(brMatch[1]);
+
+    // Cari Metadata dengan Regex yang lebih fleksibel
+    const titleMatch = message.match(/^\s*title\s*:\s*(.+)$/i);
+    const artistMatch = message.match(/^\s*artist\s*:\s*(.+)$/i);
+    const albumMatch = message.match(/^\s*album\s*:\s*(.+)$/i);
+
+    if (titleMatch) title = titleMatch[1].trim();
+    if (artistMatch) artist = artistMatch[1].trim();
+    if (albumMatch) album = albumMatch[1].trim();
   };
 
   ffmpeg.on('log', logHandler);
   try {
     await ffmpeg.exec(['-i', tempName]);
   } catch (e) {
-    // Error diharapkan karena tidak ada output file.
+    // Error diabaikan karena FFmpeg berhenti tanpa output
   }
   ffmpeg.off('log', logHandler);
   await ffmpeg.deleteFile(tempName);
 
-  return { bitrate };
+  return { bitrate, title, artist, album };
 };
 
 /**
@@ -116,7 +130,7 @@ export const getFileInfo = async (file) => {
  * @param {Object} options - Pengaturan target.
  * @param {Function} onProgress - Callback progres konversi.
  */
-export const convertAudio = async (file, options = { format: 'm4a', bitrate: '256k' }, onProgress = () => {}) => {
+export const convertAudio = async (file, options = { format: 'm4a', bitrate: '256k', metadata: {} }, onProgress = () => {}) => {
   if (!ffmpeg) await initFFmpeg();
 
   // Reset/pasang listener progres spesifik untuk file ini
@@ -126,7 +140,7 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '25
   ffmpeg.on('progress', progressHandler);
 
   try {
-    const { format, bitrate } = options;
+    const { format, bitrate, metadata } = options;
     const ext = file.name.split('.').pop().toLowerCase();
     const inputName = `input_${Math.random().toString(36).substr(2, 5)}.${ext}`;
     const outputName = `output_${Math.random().toString(36).substr(2, 5)}.${format}`;
@@ -138,6 +152,13 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '25
 
     // Gunakan mapping standar: Audio + Album Art (jika ada)
     const args = ['-i', inputName, '-map_metadata', '0', '-map', '0:a', '-map', '0:v?'];
+
+    // Tambahkan Metadata Manual jika ada
+    if (metadata) {
+      if (metadata.title) args.push('-metadata', `title=${metadata.title}`);
+      if (metadata.artist) args.push('-metadata', `artist=${metadata.artist}`);
+      if (metadata.album) args.push('-metadata', `album=${metadata.album}`);
+    }
 
     // Logika Smart Adaptive untuk Artwork
     const brNum = parseInt(bitrate);

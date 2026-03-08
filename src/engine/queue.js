@@ -6,58 +6,116 @@ export class ConversionQueue {
   constructor() {
     this.queue = [];
     this.isProcessing = false;
-    this.processedCount = 0; // Hitung file yang sudah diproses untuk recycle engine
+    this.isPaused = false;
+    this.processedCount = 0;
     this.wakeLock = null;
     this.onStatusChange = () => {};
-    this.lastUpdate = 0; // Untuk throttle progress
+    this.lastUpdate = 0;
+    this.namingTemplate = '[NAME]_kecil';
+    this.isNamingActive = false; // Default: OFF
   }
 
-  addFiles(files, options = { format: 'm4a', bitrate: '256k' }, autoStart = false) {
-    const newItems = Array.from(files).map((file) => ({
-      file,
-      options,
-      status: 'waiting',
-      progress: 0,
-      id: Math.random().toString(36).substr(2, 9),
-    }));
+  addFiles(files, options = { format: 'm4a', bitrate: '256k', metadata: {} }, autoStart = false) {
+    const newItems = Array.from(files).map((file) => {
+      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+      return {
+        file,
+        options: {
+          ...options,
+          metadata: {
+            title: nameWithoutExt, // Default title dari nama file
+            artist: '',
+            album: '',
+            ...options.metadata,
+          },
+        },
+        status: 'waiting',
+        progress: 0,
+        id: Math.random().toString(36).substr(2, 9),
+      };
+    });
     this.queue = [...this.queue, ...newItems];
 
     if (autoStart) {
       this.processNext();
     }
 
-    this.onStatusChange(this.queue);
+    this.emitStatus();
     return newItems;
   }
 
   removeItem(id) {
     const item = this.queue.find((i) => i.id === id);
-    if (item && item.status === 'processing') return false; // Jangan hapus yang sedang jalan
+    if (item && item.status === 'processing') return false;
 
     this.queue = this.queue.filter((i) => i.id !== id);
-    this.onStatusChange([...this.queue]);
+    this.emitStatus();
     return true;
   }
 
   clearQueue() {
     if (this.isProcessing) return false;
     this.queue = [];
-    this.onStatusChange([]);
+    this.emitStatus();
     return true;
   }
 
   updateAllOptions(options) {
     this.queue = this.queue.map((item) => {
       if (item.status === 'waiting') {
-        return { ...item, options: { ...options } };
+        const currentMetadata = item.options.metadata || {};
+        return {
+          ...item,
+          options: {
+            ...options,
+            metadata: { ...currentMetadata },
+          },
+        };
       }
       return item;
     });
-    this.onStatusChange([...this.queue]);
+    this.emitStatus();
+  }
+
+  updateItemOptions(id, options) {
+    this.queue = this.queue.map((item) => {
+      if (item.id === id) {
+        return { ...item, options: { ...item.options, ...options } };
+      }
+      return item;
+    });
+    this.emitStatus();
+  }
+
+  setNamingTemplate(template) {
+    this.namingTemplate = template;
+    this.emitStatus();
+  }
+
+  setNamingActive(active) {
+    this.isNamingActive = active;
+    this.emitStatus();
+  }
+
+  togglePause() {
+    this.isPaused = !this.isPaused;
+    this.emitStatus(); // Update UI dulu
+    if (!this.isPaused) {
+      this.processNext();
+    }
+  }
+
+  // Helper untuk emit status lengkap (queue + pause state)
+  emitStatus() {
+    this.onStatusChange([...this.queue], {
+      isPaused: this.isPaused,
+      namingTemplate: this.namingTemplate,
+      isNamingActive: this.isNamingActive,
+    });
   }
 
   async processNext() {
-    if (this.isProcessing || this.queue.length === 0) return;
+    if (this.isProcessing || this.isPaused || this.queue.length === 0) return;
 
     const nextItem = this.queue.find((item) => item.status === 'waiting');
     if (!nextItem) {
@@ -70,7 +128,7 @@ export class ConversionQueue {
 
     this.isProcessing = true;
     nextItem.status = 'processing';
-    this.onStatusChange([...this.queue]);
+    this.emitStatus();
 
     try {
       if (!this.wakeLock) {
@@ -89,30 +147,49 @@ export class ConversionQueue {
 
         const now = Date.now();
         if (now - this.lastUpdate > throttleInterval) {
-          this.onStatusChange([...this.queue]);
+          this.emitStatus();
           this.lastUpdate = now;
         }
       });
 
-      const outputName = nextItem.file.name.replace(/\.[^/.]+$/, '') + `.${extension}`;
+      // Generate output name
+      const baseName = nextItem.file.name.replace(/\.[^/.]+$/, '');
+      let outputName = `${baseName}.${extension}`; // Default: nama asli
+
+      if (this.isNamingActive) {
+        const sanitizedTemplate = this.namingTemplate.replace(/[\\/:*?"<>|]/g, '');
+        const processed = sanitizedTemplate.replace('[NAME]', baseName).replace('[BITRATE]', nextItem.options.bitrate).replace('[EXT]', extension);
+
+        if (processed && processed !== sanitizedTemplate) {
+          outputName = processed;
+          if (!outputName.endsWith(`.${extension}`)) {
+            outputName += `.${extension}`;
+          }
+        }
+      }
+
       triggerDownload(data, outputName, mimeType);
 
       nextItem.status = 'completed';
       nextItem.progress = 100;
       this.processedCount++;
 
-      // Engine Recycling: Tiap 15 file, matikan engine & nyalakan lagi untuk bersihkan RAM
-      if (this.processedCount >= 15) {
+      // Engine Recycling: Tiap 30 file, matikan engine & nyalakan lagi untuk bersihkan RAM
+      if (this.processedCount >= 30) {
         console.log('[Queue] Mendaur ulang engine untuk membersihkan memori...');
+        // Kita tidak 'await' secara kaku di sini agar tidak menghambat siklus queue,
+        // tapi kita pastikan terminate selesai sebelum lagu selanjutnya memanggil init
         await terminateEngine();
         this.processedCount = 0;
+        // Opsional: Langsung trigger initFFmpeg di sini untuk pre-loading
+        initFFmpeg().catch(console.error);
       }
     } catch (error) {
       console.error('Konversi gagal:', error);
       nextItem.status = 'error';
     } finally {
       this.isProcessing = false;
-      this.onStatusChange([...this.queue]);
+      this.emitStatus();
       this.processNext();
     }
   }

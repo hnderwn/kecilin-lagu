@@ -1,5 +1,5 @@
 /**
- * Utility to keep the screen on during conversion
+ * Utility untuk menjaga Layar tetap menyala saat konversi
  */
 export const requestWakeLock = async () => {
   if ('wakeLock' in navigator) {

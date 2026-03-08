@@ -12,11 +12,16 @@ const VinylDisc = memo(({ isSpinning, accentColor }) => (
 const Converter = () => {
   // --- State Aplikasi ---
   const [items, setItems] = useState([]);
+  const [isPaused, setIsPaused] = useState(false);
+  const [namingTemplate, setNamingTemplate] = useState('[NAME]_kecil');
+  const [isNamingActive, setIsNamingActive] = useState(false);
   const [accentColor, setAccentColor] = useState('#14b8a6');
   const [format, setFormat] = useState('m4a');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showAccentPicker, setShowAccentPicker] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
+  const [showNaming, setShowNaming] = useState(false);
   const [notification, setNotification] = useState(null);
   const [engineStatus, setEngineStatus] = useState('idle');
   const [isMinimized, setIsMinimized] = useState(false);
@@ -51,8 +56,11 @@ const Converter = () => {
 
   // --- Efek & Listener ---
   useEffect(() => {
-    conversionQueue.onStatusChange = (newQueue) => {
+    conversionQueue.onStatusChange = (newQueue, state) => {
       setItems([...newQueue]);
+      setIsPaused(state.isPaused);
+      setNamingTemplate(state.namingTemplate);
+      setIsNamingActive(state.isNamingActive);
       const active = newQueue.some((item) => item.status === 'processing');
       setIsProcessing(active);
     };
@@ -161,6 +169,85 @@ const Converter = () => {
     );
   };
 
+  const MetadataEditor = () => {
+    if (!editingItem) return null;
+
+    const [isLoadingMeta, setIsLoadingMeta] = useState(false);
+    const [meta, setMeta] = useState({
+      title: editingItem.options.metadata?.title || '',
+      artist: editingItem.options.metadata?.artist || '',
+      album: editingItem.options.metadata?.album || '',
+    });
+
+    // Auto-fetch metadata saat modal pertama kali dibuka
+    useEffect(() => {
+      // Cek apakah item ini sudah memiliki metadata yang diisi (kecuali title default)
+      const hasInitialMeta = editingItem.options.metadata?.artist || editingItem.options.metadata?.album;
+
+      if (!hasInitialMeta) {
+        let isMounted = true;
+        const fetchMeta = async () => {
+          setIsLoadingMeta(true);
+          try {
+            const info = await getFileInfo(editingItem.file);
+            if (isMounted) {
+              setMeta({
+                title: info.title || meta.title,
+                artist: info.artist || '',
+                album: info.album || '',
+              });
+            }
+          } catch (e) {
+            console.warn('Gagal memuat metadata asli:', e);
+          } finally {
+            if (isMounted) setIsLoadingMeta(false);
+          }
+        };
+        fetchMeta();
+        return () => {
+          isMounted = false;
+        };
+      }
+    }, [editingItem]);
+
+    const handleSave = () => {
+      conversionQueue.updateItemOptions(editingItem.id, { metadata: meta });
+      setEditingItem(null);
+    };
+
+    return (
+      <div className={`meta-editor-overlay ${isMinimized ? 'is-minimized' : ''}`} onClick={() => setEditingItem(null)}>
+        <div className="meta-editor-card" onClick={(e) => e.stopPropagation()}>
+          <div className="meta-editor-header">
+            <span>Edit Metadata {isLoadingMeta && <span className="loading-text-small">(Membaca...)</span>}</span>
+            <button className="meta-close" onClick={() => setEditingItem(null)}>
+              ×
+            </button>
+          </div>
+          <div className="meta-editor-body" style={{ opacity: isLoadingMeta ? 0.6 : 1, transition: 'opacity 0.3s' }}>
+            <div className="meta-field">
+              <label>Title</label>
+              <input type="text" value={meta.title} onChange={(e) => setMeta({ ...meta, title: e.target.value })} placeholder="Judul lagu..." disabled={isLoadingMeta} autoFocus />
+            </div>
+            <div className="meta-field">
+              <label>Artist</label>
+              <input type="text" value={meta.artist} onChange={(e) => setMeta({ ...meta, artist: e.target.value })} placeholder="Nama penyanyi..." disabled={isLoadingMeta} />
+            </div>
+            <div className="meta-field">
+              <label>Album</label>
+              <input type="text" value={meta.album} onChange={(e) => setMeta({ ...meta, album: e.target.value })} placeholder="Nama album..." disabled={isLoadingMeta} />
+            </div>
+          </div>
+          <div className="meta-editor-footer">
+            <button className="btn btn-primary" onClick={handleSave} disabled={isLoadingMeta}>
+              {isLoadingMeta ? 'Mohon Tunggu...' : 'Simpan Perubahan'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // --- Variabel Render ---
   const currentItem = items.find((item) => item.status === 'processing');
   const hasFiles = items.length > 0;
@@ -251,6 +338,13 @@ const Converter = () => {
                   <div className="vinyl-progress-bar" style={{ width: `${progress}%` }} />
                 </div>
                 <div className="vinyl-percent">{Math.round(progress)}%</div>
+
+                {/* Mini Pause Toggle in Theatrical */}
+                {isProcessing && (
+                  <button className={`vinyl-pause-btn ${isPaused ? 'is-paused' : ''}`} onClick={() => conversionQueue.togglePause()} title={isPaused ? 'Lanjutkan' : 'Jeda setelah file ini'}>
+                    {isPaused ? '▶' : 'Ⅱ'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -274,6 +368,7 @@ const Converter = () => {
             </div>
           </div>
         </div>
+        <MetadataEditor />
       </div>
     );
   }
@@ -330,9 +425,17 @@ const Converter = () => {
             <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()}>
               + Tambah File
             </button>
-            <button className="btn btn-primary" disabled={isProcessing || !items.some((i) => i.status === 'waiting')} onClick={startConversion}>
-              ▶ Mulai Kompresi
-            </button>
+
+            {!isProcessing && !isPaused ? (
+              <button className="btn btn-primary" disabled={!items.some((i) => i.status === 'waiting')} onClick={startConversion}>
+                ▶ Mulai Kompresi
+              </button>
+            ) : (
+              <button className={`btn ${isPaused ? 'btn-primary' : 'btn-danger'}`} onClick={() => conversionQueue.togglePause()} style={{ minWidth: '160px' }}>
+                {isPaused ? '▶ Lanjutkan' : 'Ⅱ Jeda Lagu Selanjutnya'}
+              </button>
+            )}
+
             <input type="file" multiple accept="audio/*" ref={fileInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
           </section>
 
@@ -376,6 +479,13 @@ const Converter = () => {
                     {item.file.name}
                     <span className="queue-format-tag">{item.options.format.toUpperCase()}</span>
                   </span>
+
+                  {item.status === 'waiting' && (
+                    <button className="queue-edit-btn" onClick={() => setEditingItem(item)} title="Edit Metadata">
+                      Edit
+                    </button>
+                  )}
+
                   <span className={`queue-status badge-${item.status}`}>{statusLabel(item.status)}</span>
                   <button className="queue-remove-btn" onClick={() => conversionQueue.removeItem(item.id)} disabled={item.status === 'processing'} title="Hapus dari antrean">
                     ×
@@ -427,10 +537,48 @@ const Converter = () => {
                   ))}
                 </select>
               </div>
+              <div className="output-item-wide">
+                <div className="output-row">
+                  <span className="label">Naming Template</span>
+                  <button
+                    className={`terminal-switch ${isNamingActive ? 'is-active' : ''}`}
+                    onClick={() => {
+                      const newState = !isNamingActive;
+                      setIsNamingActive(newState);
+                      conversionQueue.setNamingActive(newState);
+                    }}
+                  >
+                    {isNamingActive ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                {isNamingActive && (
+                  <div className="template-accordion-content">
+                    <div className="template-input-wrapper">
+                      <span className="template-prefix">&gt;</span>
+                      <input
+                        type="text"
+                        className="template-input"
+                        value={namingTemplate}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNamingTemplate(val);
+                          conversionQueue.setNamingTemplate(val);
+                        }}
+                        placeholder="Contoh: [NAME]_kecil"
+                      />
+                    </div>
+                    <p className="template-hint">
+                      Tags: <strong>[NAME]</strong>, <strong>[BITRATE]</strong>, <strong>[EXT]</strong>
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
           </section>
         </div>
       </div>
+      <MetadataEditor />
     </div>
   );
 };

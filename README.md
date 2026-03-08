@@ -8,11 +8,14 @@
 
 - **100% Client-Side**: Proses konversi terjadi sepenuhnya di perangkat Anda menggunakan **FFmpeg WASM**. File Anda tidak pernah diunggah ke server.
 - **Dukungan Format Luas**: Mendukung input dari berbagai format audio (FLAC, WAV, MP3, M4A, OGG) bahkan ekstraksi audio dari video.
+- **Auto-Metadata Detection**: Secara otomatis membaca Judul, Artis, dan Album dari file asli saat Anda ingin mengedit metadata, memudahkan perbaikan tag massal.
+- **Naming Template**: Atur pola nama file output secara dinamis menggunakan tag seperti `[NAME]`, `[BITRATE]`, dan `[EXT]`.
+- **Stop After Current (Jeda)**: Fitur "Jeda Sistem" yang cerdas; aplikasi akan menyelesaikan lagu yang sedang diproses sebelum benar-benar berhenti, menjaga file tetap utuh.
 - **Smart Adaptive Artwork**: Secara otomatis menyesuaikan ukuran album art berdasarkan bitrate yang dipilih (500px - 800px) untuk menjaga kualitas visual tetap proporsional.
 - **Batch Processing**: Masukkan ratusan file sekaligus ke dalam antrean (Tracklist) dan biarkan aplikasi menyelesaikannya satu per satu.
 - **Dukungan PWA & Offline**: Install aplikasi ke desktop atau HP. Berkat self-hosted WASM, aplikasi tetap bisa bekerja tanpa koneksi internet setelah muatan pertama.
 - **Theatrical Pane**: Mode visualisasi cakram vinyl yang berputar saat proses konversi berlangsung, memberikan pengalaman auditif-visual yang unik.
-- **Engine Recycling**: Sistem otomatis mendaur ulang engine FFmpeg setiap 15 file untuk memastikan penggunaan RAM tetap stabil dan mencegah crash pada antrean panjang.
+- **Engine Recycling**: Sistem otomatis mendaur ulang engine FFmpeg setiap 30 file untuk memastikan penggunaan RAM tetap stabil dan mencegah crash pada antrean panjang.
 
 ---
 
