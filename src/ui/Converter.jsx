@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { conversionQueue } from '../engine/queue';
 import { getFileInfo, setEngineStatusListener, initFFmpeg, resetEngine } from '../engine/ffmpegEngine';
+import { subscribeToLogs, clearLogs } from '../utils/logger';
 
 /* ── VinylDisc memo — isolated from progress re-renders ── */
 const VinylDisc = memo(({ isSpinning, accentColor }) => (
@@ -8,6 +9,148 @@ const VinylDisc = memo(({ isSpinning, accentColor }) => (
     <div className="vinyl-label" />
   </div>
 ));
+
+const MetadataEditor = ({ editingItem, setEditingItem, isMinimized }) => {
+  if (!editingItem) return null;
+
+  const [isLoadingMeta, setIsLoadingMeta] = useState(false);
+  const [meta, setMeta] = useState({
+    title: editingItem.options.metadata?.title || '',
+    artist: editingItem.options.metadata?.artist || '',
+    album: editingItem.options.metadata?.album || '',
+    genre: editingItem.options.metadata?.genre || '',
+    year: editingItem.options.metadata?.year || '',
+    track: editingItem.options.metadata?.track || '',
+  });
+  const [coverFile, setCoverFile] = useState(editingItem.options.coverFile || null);
+  const [applyToAll, setApplyToAll] = useState(false);
+  const [detectedLyrics, setDetectedLyrics] = useState(false);
+  const [keepLyrics, setKeepLyrics] = useState(editingItem.options.keepLyrics !== false);
+
+  const coverInputRef = useRef(null);
+
+  // Auto-fetch metadata saat modal pertama kali dibuka
+  useEffect(() => {
+    // Cek apakah item ini sudah pernah di-fetch metadatanya (ada field apa pun yang tidak undefined)
+    const hasInitialMeta = editingItem.options.metadata && Object.keys(editingItem.options.metadata).length > 0;
+
+    if (!hasInitialMeta) {
+      let isMounted = true;
+      const fetchMeta = async () => {
+        setIsLoadingMeta(true);
+        try {
+          const info = await getFileInfo(editingItem.file);
+          if (isMounted) {
+            setMeta({
+              ...meta,
+              title: info.title || meta.title || editingItem.file.name.replace(/\.[^/.]+$/, ''),
+              artist: info.artist || '',
+              album: info.album || '',
+              genre: info.genre || '',
+              year: info.year || '',
+              track: info.track || '',
+            });
+            setDetectedLyrics(info.hasLyrics);
+          }
+        } catch (e) {
+          console.warn('Gagal memuat metadata asli:', e);
+        } finally {
+          if (isMounted) setIsLoadingMeta(false);
+        }
+      };
+      fetchMeta();
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [editingItem]); // meta dihapus dari dependencies agar aman dari loop
+
+  const handleSave = () => {
+    const updatedOptions = { metadata: meta, coverFile, keepLyrics };
+    if (applyToAll) {
+      conversionQueue.applyBatchMetadata(meta, coverFile);
+    }
+    conversionQueue.updateItemOptions(editingItem.id, updatedOptions);
+    setEditingItem(null);
+  };
+
+  const handleCoverChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      setCoverFile(e.target.files[0]);
+    }
+  };
+
+  return (
+    <div className={`meta-editor-overlay ${isMinimized ? 'is-minimized' : ''}`} onClick={() => setEditingItem(null)}>
+      <div className="meta-editor-card" onClick={(e) => e.stopPropagation()}>
+        <div className="meta-editor-header">
+          <span>Edit Metadata {isLoadingMeta && <span className="loading-text-small">(Membaca...)</span>}</span>
+          <button className="meta-close" onClick={() => setEditingItem(null)}>
+            ×
+          </button>
+        </div>
+        <div className="meta-editor-body" style={{ opacity: isLoadingMeta ? 0.6 : 1, transition: 'opacity 0.3s' }}>
+          <div className="meta-field">
+            <label>Title</label>
+            <input type="text" value={meta.title} onChange={(e) => setMeta({ ...meta, title: e.target.value })} placeholder="Judul lagu..." disabled={isLoadingMeta} autoFocus />
+          </div>
+          <div className="meta-row">
+            <div className="meta-field">
+              <label>Artist</label>
+              <input type="text" value={meta.artist} onChange={(e) => setMeta({ ...meta, artist: e.target.value })} placeholder="Penyanyi" disabled={isLoadingMeta} />
+            </div>
+            <div className="meta-field">
+              <label>Album</label>
+              <input type="text" value={meta.album} onChange={(e) => setMeta({ ...meta, album: e.target.value })} placeholder="Album" disabled={isLoadingMeta} />
+            </div>
+          </div>
+          <div className="meta-row">
+            <div className="meta-field">
+              <label>Genre</label>
+              <input type="text" value={meta.genre} onChange={(e) => setMeta({ ...meta, genre: e.target.value })} placeholder="Pop, Rock" disabled={isLoadingMeta} />
+            </div>
+            <div className="meta-field">
+              <label>Year</label>
+              <input type="text" value={meta.year} onChange={(e) => setMeta({ ...meta, year: e.target.value })} placeholder="YYYY" disabled={isLoadingMeta} />
+            </div>
+            <div className="meta-field">
+              <label>Track No.</label>
+              <input type="text" value={meta.track} onChange={(e) => setMeta({ ...meta, track: e.target.value })} placeholder="1/10" disabled={isLoadingMeta} />
+            </div>
+          </div>
+
+          <div className="meta-field cover-field">
+            <label>Custom Cover (JPG/PNG)</label>
+            <div className="cover-upload-area" onClick={() => coverInputRef.current?.click()}>
+              {coverFile ? <span className="cover-name">{coverFile.name}</span> : <span className="cover-placeholder">Klik untuk unggah gambar</span>}
+            </div>
+            <input type="file" ref={coverInputRef} onChange={handleCoverChange} accept="image/png, image/jpeg" style={{ display: 'none' }} disabled={isLoadingMeta}/>
+            {coverFile && <button className="cover-clear-btn" onClick={() => setCoverFile(null)}>Hapus</button>}
+          </div>
+
+          {detectedLyrics && (
+            <div className="meta-lyrics-notice">
+              <span className="lyrics-icon">♪</span> Lagu ini memiliki lirik bawaan
+              <label className="lyrics-toggle">
+                <input type="checkbox" checked={keepLyrics} onChange={(e) => setKeepLyrics(e.target.checked)} />
+                Pertahankan Lirik
+              </label>
+            </div>
+          )}
+        </div>
+        <div className="meta-editor-footer">
+          <label className="batch-apply-toggle">
+            <input type="checkbox" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} />
+            Terapkan Artist, Album, Genre, & Cover ke semua sisa antrean
+          </label>
+          <button className="btn btn-primary" onClick={handleSave} disabled={isLoadingMeta}>
+            {isLoadingMeta ? 'Mohon Tunggu...' : 'Simpan Perubahan'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Converter = () => {
   // --- State Aplikasi ---
@@ -26,6 +169,9 @@ const Converter = () => {
   const [engineStatus, setEngineStatus] = useState('idle');
   const [isMinimized, setIsMinimized] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showConsole, setShowConsole] = useState(false);
+  const [stripMetadata, setStripMetadata] = useState(false);
+  const [logs, setLogs] = useState([]);
 
   const fileInputRef = useRef(null);
 
@@ -80,7 +226,14 @@ const Converter = () => {
       }
     });
 
-    return () => setEngineStatusListener(null);
+    const unsubscribe = subscribeToLogs((newLogs) => {
+      setLogs([...newLogs]);
+    });
+
+    return () => {
+      setEngineStatusListener(null);
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -101,7 +254,7 @@ const Converter = () => {
     } catch (e) {
       console.warn('Gagal mengecek bitrate:', e);
     }
-    conversionQueue.addFiles(files, { format, bitrate });
+    conversionQueue.addFiles(files, { format, bitrate, stripMetadata });
   };
 
   const onDrop = (e) => {
@@ -124,6 +277,46 @@ const Converter = () => {
   const handleExpand = () => setIsMinimized(false);
 
   // --- Sub Komponen ---
+  const ConsoleTerminal = () => {
+    const scrollRef = useRef(null);
+
+    useEffect(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    }, [logs, showConsole]);
+
+    if (!showConsole) return null;
+
+    return (
+      <div className="console-overlay" onClick={() => setShowConsole(false)}>
+        <div className="console-window" onClick={(e) => e.stopPropagation()}>
+          <div className="console-header">
+            <div className="console-title">
+              <span className="prompt">$</span> system.logs
+            </div>
+            <div className="console-actions">
+              <button className="console-btn-text" onClick={clearLogs}>Clear</button>
+              <button className="console-btn-text" onClick={() => setShowConsole(false)}>Close</button>
+            </div>
+          </div>
+          <div className="console-body" ref={scrollRef}>
+            {logs.length === 0 ? (
+              <div className="console-empty">No logs captured yet...</div>
+            ) : (
+              logs.map((log) => (
+                <div key={log.id} className={`log-entry log-${log.type}`}>
+                  <span className="log-time">[{log.timestamp}]</span>
+                  <span className="log-msg">{log.message}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const LoadingOverlay = () => {
     if (engineStatus !== 'loading' && engineStatus !== 'error') return null;
     return (
@@ -169,84 +362,7 @@ const Converter = () => {
     );
   };
 
-  const MetadataEditor = () => {
-    if (!editingItem) return null;
 
-    const [isLoadingMeta, setIsLoadingMeta] = useState(false);
-    const [meta, setMeta] = useState({
-      title: editingItem.options.metadata?.title || '',
-      artist: editingItem.options.metadata?.artist || '',
-      album: editingItem.options.metadata?.album || '',
-    });
-
-    // Auto-fetch metadata saat modal pertama kali dibuka
-    useEffect(() => {
-      // Cek apakah item ini sudah memiliki metadata yang diisi (kecuali title default)
-      const hasInitialMeta = editingItem.options.metadata?.artist || editingItem.options.metadata?.album;
-
-      if (!hasInitialMeta) {
-        let isMounted = true;
-        const fetchMeta = async () => {
-          setIsLoadingMeta(true);
-          try {
-            const info = await getFileInfo(editingItem.file);
-            if (isMounted) {
-              setMeta({
-                title: info.title || meta.title,
-                artist: info.artist || '',
-                album: info.album || '',
-              });
-            }
-          } catch (e) {
-            console.warn('Gagal memuat metadata asli:', e);
-          } finally {
-            if (isMounted) setIsLoadingMeta(false);
-          }
-        };
-        fetchMeta();
-        return () => {
-          isMounted = false;
-        };
-      }
-    }, [editingItem]);
-
-    const handleSave = () => {
-      conversionQueue.updateItemOptions(editingItem.id, { metadata: meta });
-      setEditingItem(null);
-    };
-
-    return (
-      <div className={`meta-editor-overlay ${isMinimized ? 'is-minimized' : ''}`} onClick={() => setEditingItem(null)}>
-        <div className="meta-editor-card" onClick={(e) => e.stopPropagation()}>
-          <div className="meta-editor-header">
-            <span>Edit Metadata {isLoadingMeta && <span className="loading-text-small">(Membaca...)</span>}</span>
-            <button className="meta-close" onClick={() => setEditingItem(null)}>
-              ×
-            </button>
-          </div>
-          <div className="meta-editor-body" style={{ opacity: isLoadingMeta ? 0.6 : 1, transition: 'opacity 0.3s' }}>
-            <div className="meta-field">
-              <label>Title</label>
-              <input type="text" value={meta.title} onChange={(e) => setMeta({ ...meta, title: e.target.value })} placeholder="Judul lagu..." disabled={isLoadingMeta} autoFocus />
-            </div>
-            <div className="meta-field">
-              <label>Artist</label>
-              <input type="text" value={meta.artist} onChange={(e) => setMeta({ ...meta, artist: e.target.value })} placeholder="Nama penyanyi..." disabled={isLoadingMeta} />
-            </div>
-            <div className="meta-field">
-              <label>Album</label>
-              <input type="text" value={meta.album} onChange={(e) => setMeta({ ...meta, album: e.target.value })} placeholder="Nama album..." disabled={isLoadingMeta} />
-            </div>
-          </div>
-          <div className="meta-editor-footer">
-            <button className="btn btn-primary" onClick={handleSave} disabled={isLoadingMeta}>
-              {isLoadingMeta ? 'Mohon Tunggu...' : 'Simpan Perubahan'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
 
   // --- Variabel Render ---
   const currentItem = items.find((item) => item.status === 'processing');
@@ -301,6 +417,7 @@ const Converter = () => {
 
           <input type="file" multiple accept="audio/*" ref={fileInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
         </div>
+        <ConsoleTerminal />
       </div>
     );
   }
@@ -368,7 +485,8 @@ const Converter = () => {
             </div>
           </div>
         </div>
-        <MetadataEditor />
+        <MetadataEditor editingItem={editingItem} setEditingItem={setEditingItem} isMinimized={isMinimized} />
+        <ConsoleTerminal />
       </div>
     );
   }
@@ -397,6 +515,9 @@ const Converter = () => {
           <span className="window-title">kecilin lagu</span>
 
           <div className="header-actions">
+            <button className={`console-trigger ${showConsole ? 'active' : ''}`} onClick={() => setShowConsole(!showConsole)} title="Toggle System Console">
+              LOG
+            </button>
             <EngineBadge />
             <div className="accent-trigger-wrapper">
               <button className="accent-btn" onClick={() => setShowAccentPicker(!showAccentPicker)} title="Ganti Warna Aksen" />
@@ -536,6 +657,20 @@ const Converter = () => {
                     </option>
                   ))}
                 </select>
+                <div className="output-row" style={{ marginTop: '12px' }}>
+                  <span className="label">Privasi: Strip Meta</span>
+                  <button
+                    className={`terminal-switch ${stripMetadata ? 'is-active' : ''}`}
+                    onClick={() => {
+                      const newState = !stripMetadata;
+                      setStripMetadata(newState);
+                      conversionQueue.updateAllOptions({ format, bitrate, stripMetadata: newState });
+                    }}
+                    title="Hapus semua metadata dan artwork demi privasi"
+                  >
+                    {stripMetadata ? 'ON' : 'OFF'}
+                  </button>
+                </div>
               </div>
               <div className="output-item-wide">
                 <div className="output-row">
@@ -578,7 +713,8 @@ const Converter = () => {
           </section>
         </div>
       </div>
-      <MetadataEditor />
+      <MetadataEditor editingItem={editingItem} setEditingItem={setEditingItem} isMinimized={isMinimized} />
+      <ConsoleTerminal />
     </div>
   );
 };

@@ -17,15 +17,11 @@ export class ConversionQueue {
 
   addFiles(files, options = { format: 'm4a', bitrate: '256k', metadata: {} }, autoStart = false) {
     const newItems = Array.from(files).map((file) => {
-      const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
       return {
         file,
         options: {
           ...options,
           metadata: {
-            title: nameWithoutExt, // Default title dari nama file
-            artist: '',
-            album: '',
             ...options.metadata,
           },
         },
@@ -81,6 +77,32 @@ export class ConversionQueue {
     this.queue = this.queue.map((item) => {
       if (item.id === id) {
         return { ...item, options: { ...item.options, ...options } };
+      }
+      return item;
+    });
+    this.emitStatus();
+  }
+
+  applyBatchMetadata(metadataToApply, coverFileToApply) {
+    this.queue = this.queue.map((item) => {
+      if (item.status === 'waiting') {
+        const newOptions = { ...item.options };
+        
+        // Terapkan properti yang bersifat batch/massal (jangan timpa title track spesifik)
+        newOptions.metadata = { 
+          ...item.options.metadata, 
+          artist: metadataToApply.artist !== undefined ? metadataToApply.artist : item.options.metadata?.artist,
+          album: metadataToApply.album !== undefined ? metadataToApply.album : item.options.metadata?.album,
+          genre: metadataToApply.genre !== undefined ? metadataToApply.genre : item.options.metadata?.genre,
+          year: metadataToApply.year !== undefined ? metadataToApply.year : item.options.metadata?.year,
+        };
+        
+        // Set cover art manual kalau disediakan
+        if (coverFileToApply !== undefined) {
+          newOptions.coverFile = coverFileToApply;
+        }
+
+        return { ...item, options: newOptions };
       }
       return item;
     });
