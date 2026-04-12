@@ -18,48 +18,51 @@ const updateStatus = (status) => {
   if (onStatusUpdate) onStatusUpdate(status);
 };
 
-/**
- * Inisialisasi FFmpeg WASM.
- */
+let initPromise = null;
+
 export const initFFmpeg = async () => {
   if (ffmpeg && loadStatus === 'ready') return ffmpeg;
+  if (initPromise) return initPromise;
 
-  updateStatus('loading');
+  initPromise = (async () => {
+    updateStatus('loading');
+    try {
+      const newFfmpeg = new FFmpeg();
+      window.ff = newFfmpeg; // Ekspos segera untuk debug
 
-  try {
-    ffmpeg = new FFmpeg();
-    window.ff = ffmpeg; // Ekspos segera untuk debug
+      // Menangkap log dari FFmpeg untuk debugging.
+      newFfmpeg.on('log', ({ message }) => {
+        console.log('[FFmpeg Log]', message);
+      });
 
-    // Menangkap log dari FFmpeg untuk debugging.
-    ffmpeg.on('log', ({ message }) => {
-      console.log('[FFmpeg Log]', message);
-    });
+      // Memuat resource inti FFmpeg dari file lokal (public folder)
+      // Ini lebih stabil untuk PWA dan mendukung mode offline berkala.
+      const coreURL = await toBlobURL('/ffmpeg-core.js', 'text/javascript');
+      const wasmURL = await toBlobURL('/ffmpeg-core.wasm', 'application/wasm');
 
-    // Memuat resource inti FFmpeg dari file lokal (public folder)
-    // Ini lebih stabil untuk PWA dan mendukung mode offline berkala.
-    const coreURL = await toBlobURL('/ffmpeg-core.js', 'text/javascript');
-    const wasmURL = await toBlobURL('/ffmpeg-core.wasm', 'application/wasm');
+      await newFfmpeg.load({
+        coreURL,
+        wasmURL,
+      });
 
-    await ffmpeg.load({
-      coreURL,
-      wasmURL,
-    });
+      // Ekspos ke global untuk debugging di console (window.ff)
+      window.ff = newFfmpeg;
+      console.log('[FFmpeg Engine] Ready. Use window.ff for debugging.');
 
-    // Ekspos ke global untuk debugging di console (window.ff)
-    window.ff = ffmpeg;
-    console.log('[FFmpeg Engine] Ready. Use window.ff for debugging.');
+      ffmpeg = newFfmpeg;
+      updateStatus('ready');
+      return ffmpeg;
+    } catch (error) {
+      updateStatus('error');
+      console.error('FFmpeg failed to load:', error);
+      ffmpeg = null; // Reset agar bisa re-try
+      throw error;
+    } finally {
+      initPromise = null;
+    }
+  })();
 
-    // Cek format & codec yang tersedia (untuk debugging di console)
-    // ffmpeg.exec(['-codecs']);
-
-    updateStatus('ready');
-    return ffmpeg;
-  } catch (error) {
-    updateStatus('error');
-    console.error('FFmpeg failed to load:', error);
-    ffmpeg = null; // Reset agar bisa re-try
-    throw error;
-  }
+  return initPromise;
 };
 
 export const resetEngine = () => {
@@ -146,8 +149,8 @@ export const getFileInfo = async (file) => {
  * @param {Object} options - Pengaturan target.
  * @param {Function} onProgress - Callback progres konversi.
  */
-export const convertAudio = async (file, options = { format: 'm4a', bitrate: '256k', metadata: {} }, onProgress = () => {}) => {
-  if (!ffmpeg) await initFFmpeg();
+export const convertAudio = async (file, options = { format: 'm4a', bitrate: '160k', metadata: {} }, onProgress = () => {}) => {
+  if (!ffmpeg || loadStatus !== 'ready') await initFFmpeg();
 
   // Reset/pasang listener progres spesifik untuk file ini
   const progressHandler = ({ progress }) => {
@@ -185,12 +188,12 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '25
       const dateMatch = message.match(/\b(?:date|year)\s*:\s*(.+)/i);
       const trackMatch = message.match(/\btrack\s*:\s*(.+)/i);
 
-      if (titleMatch) extractedMeta.title = titleMatch[1].trim();
-      if (artistMatch) extractedMeta.artist = artistMatch[1].trim();
-      if (albumMatch) extractedMeta.album = albumMatch[1].trim();
-      if (genreMatch) extractedMeta.genre = genreMatch[1].trim();
-      if (dateMatch) extractedMeta.year = dateMatch[1].trim();
-      if (trackMatch) extractedMeta.track = trackMatch[1].trim();
+      if (titleMatch && !extractedMeta.title) extractedMeta.title = titleMatch[1].trim();
+      if (artistMatch && !extractedMeta.artist) extractedMeta.artist = artistMatch[1].trim();
+      if (albumMatch && !extractedMeta.album) extractedMeta.album = albumMatch[1].trim();
+      if (genreMatch && !extractedMeta.genre) extractedMeta.genre = genreMatch[1].trim();
+      if (dateMatch && !extractedMeta.year) extractedMeta.year = dateMatch[1].trim();
+      if (trackMatch && !extractedMeta.track) extractedMeta.track = trackMatch[1].trim();
     };
 
     ffmpeg.on('log', probeLogHandler);
@@ -249,14 +252,15 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '25
     if (brNum <= 128) artSize = 500;
     if (brNum >= 320) artSize = 800;
 
-    const filterArt = `crop='min(iw,ih)':'min(iw,ih)',scale=${artSize}:${artSize}`;
-    const baseVideoArgs = ['-c:v', 'mjpeg', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-r', '1'];
-    
-    // Karena kita sudah mendeteksi cover aslinya via probe, kita bisa menggunakan -vf dengan aman 
-    // jika coverFile ATAU hasOriginalCover bernilai true.
+    // Karena webassembly ffmpeg bermasalah dengan swscaler dan mjpeg pixel format kuno (serta framerate m4a muxer),
+    // Kita HANYA melakukan resize agresif jika user benar-benar mengunggah Custom Cover (yang baru dan steril).
+    // Jika itu adalah cover bawaan asli, kita akan 'copy' mentah-mentah agar stabilitas 100% terjaga.
     let videoArgs = [];
-    if (coverFile || (hasOriginalCover && !stripMetadata)) {
-      videoArgs = ['-vf', filterArt, ...baseVideoArgs];
+    if (coverFile) {
+      const filterArt = `crop='min(iw,ih)':'min(iw,ih)',scale=${artSize}:${artSize}`;
+      videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
+    } else if (hasOriginalCover && !stripMetadata) {
+      videoArgs = ['-c:v', 'copy', '-disposition:v', 'attached_pic'];
     }
 
     if (format === 'm4a') {

@@ -180,7 +180,7 @@ const Converter = () => {
     m4a: {
       label: 'AAC (.m4a)',
       bitrates: ['128k', '160k', '192k', '256k', '320k'],
-      default: '256k',
+      default: '160k',
     },
     mp3: {
       label: 'MP3',

@@ -15,7 +15,7 @@ export class ConversionQueue {
     this.isNamingActive = false; // Default: OFF
   }
 
-  addFiles(files, options = { format: 'm4a', bitrate: '256k', metadata: {} }, autoStart = false) {
+  addFiles(files, options = { format: 'm4a', bitrate: '160k', metadata: {} }, autoStart = false) {
     const newItems = Array.from(files).map((file) => {
       return {
         file,
