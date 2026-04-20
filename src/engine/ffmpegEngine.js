@@ -252,15 +252,16 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '16
     if (brNum <= 128) artSize = 500;
     if (brNum >= 320) artSize = 800;
 
-    // Karena webassembly ffmpeg bermasalah dengan swscaler dan mjpeg pixel format kuno (serta framerate m4a muxer),
-    // Kita HANYA melakukan resize agresif jika user benar-benar mengunggah Custom Cover (yang baru dan steril).
-    // Jika itu adalah cover bawaan asli, kita akan 'copy' mentah-mentah agar stabilitas 100% terjaga.
+    // Untuk memastikan cover art raksasa tidak membocorkan memori WebAssembly atau gagal dikonversi,
+    // kita secara eksplisit menjalankan filter kompresi dan resize gambar menjadi bujursangkar,
+    // baik untuk custom cover maupun cover bawaan (original cover).
     let videoArgs = [];
+    const filterArt = `crop='min(iw,ih)':'min(iw,ih)',scale=${artSize}:${artSize}`;
+    
     if (coverFile) {
-      const filterArt = `crop='min(iw,ih)':'min(iw,ih)',scale=${artSize}:${artSize}`;
       videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
     } else if (hasOriginalCover && !stripMetadata) {
-      videoArgs = ['-c:v', 'copy', '-disposition:v', 'attached_pic'];
+      videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
     }
 
     if (format === 'm4a') {

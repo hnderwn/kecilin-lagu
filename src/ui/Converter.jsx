@@ -174,6 +174,7 @@ const Converter = () => {
   const [logs, setLogs] = useState([]);
 
   const fileInputRef = useRef(null);
+  const folderInputRef = useRef(null);
 
   // --- Konfigurasi Format ---
   const formatOptions = {
@@ -246,21 +247,73 @@ const Converter = () => {
   // --- Handler Event ---
   const handleFiles = async (files) => {
     if (files.length === 0) return;
+    
+    // Filter out non-audio files (useful for folder drops)
+    const audioFiles = Array.from(files).filter(file => 
+      file.type.startsWith('audio/') || file.name.match(/\.(mp3|m4a|flac|wav|ogg|alac|aiff)$/i)
+    );
+
+    if (audioFiles.length === 0) {
+      setNotification('Tidak ada file audio yang didukung ditemukan.');
+      return;
+    }
+
+    if (audioFiles.length > 5) {
+      setNotification(`Menambahkan ${audioFiles.length} file. Mohon "Allow" / "Izinkan" jika browser meminta izin Multiple Downloads nanti.`);
+    }
+
     try {
-      const info = await getFileInfo(files[0]);
+      const info = await getFileInfo(audioFiles[0]);
       if (info.bitrate > 0 && info.bitrate < 256) {
-        setNotification(`Perhatian: "${files[0].name}" sudah berbitrate rendah (${info.bitrate} kbps).`);
+        setNotification(`Perhatian: "${audioFiles[0].name}" sudah berbitrate rendah (${info.bitrate} kbps).`);
       }
     } catch (e) {
       console.warn('Gagal mengecek bitrate:', e);
     }
-    conversionQueue.addFiles(files, { format, bitrate, stripMetadata });
+    conversionQueue.addFiles(audioFiles, { format, bitrate, stripMetadata });
   };
 
-  const onDrop = (e) => {
+  const onDrop = async (e) => {
     e.preventDefault();
     setIsDragging(false);
-    handleFiles(e.dataTransfer.files);
+
+    if (e.dataTransfer.items) {
+      const collectedFiles = [];
+      
+      // Fungsi penjelajah item (file/folder)
+      const scanFiles = async (entry) => {
+        if (!entry) return;
+        if (entry.isDirectory) {
+          const dirReader = entry.createReader();
+          // Baca isi folder (bisa dipecah jika itemnya sangat banyak, tp untuk standar cukup)
+          const entries = await new Promise((resolve) => {
+            dirReader.readEntries(resolve);
+          });
+          for (let i = 0; i < entries.length; i++) {
+            await scanFiles(entries[i]);
+          }
+        } else if (entry.isFile) {
+          const file = await new Promise((resolve) => entry.file(resolve));
+          collectedFiles.push(file);
+        }
+      };
+
+      const scanPromises = [];
+      for (let i = 0; i < e.dataTransfer.items.length; i++) {
+        const entry = e.dataTransfer.items[i].webkitGetAsEntry();
+        if (entry) {
+          scanPromises.push(scanFiles(entry));
+        }
+      }
+
+      await Promise.all(scanPromises);
+      if (collectedFiles.length > 0) {
+        handleFiles(collectedFiles);
+      }
+    } else {
+      // Fallback untuk browser lawas
+      handleFiles(e.dataTransfer.files);
+    }
   };
 
   const onDragOver = (e) => {
@@ -405,8 +458,12 @@ const Converter = () => {
               <p className="landing-sub">
                 Lepaskan file audio di sini
                 <br />
-                atau klik untuk memilih
+                Atau pilih manual:
               </p>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '16px', marginBottom: '8px', zIndex: 10, position: 'relative' }}>
+                <button className="btn btn-secondary" onClick={(e) => { e.stopPropagation(); fileInputRef.current.click(); }}>Pilih File</button>
+                <button className="btn btn-secondary" onClick={(e) => { e.stopPropagation(); folderInputRef.current.click(); }}>Pilih Folder</button>
+              </div>
               <p className="supported-formats">
                 FLAC · MP3 · M4A · WAV
                 <br />
@@ -416,6 +473,7 @@ const Converter = () => {
           </div>
 
           <input type="file" multiple accept="audio/*" ref={fileInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
+          <input type="file" webkitdirectory="" directory="" multiple ref={folderInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
         </div>
         <ConsoleTerminal />
       </div>
@@ -543,9 +601,14 @@ const Converter = () => {
         <div className="app-body">
           {/* CONTROLS */}
           <section className="control-area">
-            <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()}>
-              + Tambah File
-            </button>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="btn btn-secondary" onClick={() => fileInputRef.current.click()}>
+                + Tambah File
+              </button>
+              <button className="btn btn-secondary" onClick={() => folderInputRef.current.click()}>
+                + Tambah Folder
+              </button>
+            </div>
 
             {!isProcessing && !isPaused ? (
               <button className="btn btn-primary" disabled={!items.some((i) => i.status === 'waiting')} onClick={startConversion}>
@@ -558,6 +621,7 @@ const Converter = () => {
             )}
 
             <input type="file" multiple accept="audio/*" ref={fileInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
+            <input type="file" webkitdirectory="" directory="" multiple ref={folderInputRef} onChange={(e) => handleFiles(e.target.files)} style={{ display: 'none' }} />
           </section>
 
           {/* STATUS */}
@@ -603,7 +667,7 @@ const Converter = () => {
 
                   {item.status === 'waiting' && (
                     <button className="queue-edit-btn" onClick={() => setEditingItem(item)} title="Edit Metadata">
-                      Edit
+                      Edit Meta <span style={{ fontSize: '0.6em', opacity: 0.7, textTransform: 'uppercase' }}>(Beta)</span>
                     </button>
                   )}
 
