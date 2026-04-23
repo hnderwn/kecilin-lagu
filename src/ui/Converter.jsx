@@ -171,6 +171,7 @@ const Converter = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
   const [stripMetadata, setStripMetadata] = useState(false);
+  const [coverMode, setCoverMode] = useState('resample');
   const [logs, setLogs] = useState([]);
 
   const fileInputRef = useRef(null);
@@ -270,7 +271,7 @@ const Converter = () => {
     } catch (e) {
       console.warn('Gagal mengecek bitrate:', e);
     }
-    conversionQueue.addFiles(audioFiles, { format, bitrate, stripMetadata });
+    conversionQueue.addFiles(audioFiles, { format, bitrate, stripMetadata, coverMode });
   };
 
   const onDrop = async (e) => {
@@ -694,7 +695,7 @@ const Converter = () => {
                     const newBitrate = formatOptions[newFormat].default;
                     setFormat(newFormat);
                     setBitrate(newBitrate);
-                    conversionQueue.updateAllOptions({ format: newFormat, bitrate: newBitrate });
+                    conversionQueue.updateAllOptions({ format: newFormat, bitrate: newBitrate, stripMetadata, coverMode });
                   }}
                 >
                   {Object.keys(formatOptions).map((k) => (
@@ -712,7 +713,7 @@ const Converter = () => {
                   onChange={(e) => {
                     const newBitrate = e.target.value;
                     setBitrate(newBitrate);
-                    conversionQueue.updateAllOptions({ format, bitrate: newBitrate });
+                    conversionQueue.updateAllOptions({ format, bitrate: newBitrate, stripMetadata, coverMode });
                   }}
                 >
                   {formatOptions[format].bitrates.map((b) => (
@@ -728,12 +729,30 @@ const Converter = () => {
                     onClick={() => {
                       const newState = !stripMetadata;
                       setStripMetadata(newState);
-                      conversionQueue.updateAllOptions({ format, bitrate, stripMetadata: newState });
+                      conversionQueue.updateAllOptions({ format, bitrate, stripMetadata: newState, coverMode });
                     }}
                     title="Hapus semua metadata dan artwork demi privasi"
                   >
                     {stripMetadata ? 'ON' : 'OFF'}
                   </button>
+                </div>
+                <div className="output-row" style={{ marginTop: '12px' }}>
+                  <span className="label">Album Cover</span>
+                  <select 
+                    className="inline-select" 
+                    value={coverMode} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCoverMode(val);
+                      conversionQueue.updateAllOptions({ format, bitrate, stripMetadata, coverMode: val });
+                    }}
+                    style={{ width: '110px' }}
+                    title="Convert: Kompres otomatis (Aman)&#10;Asli: Biarkan bawaan (Bisa gagal)&#10;No Cover: Hapus cover"
+                  >
+                    <option value="resample">Convert</option>
+                    <option value="copy">Asli</option>
+                    <option value="skip">No Cover</option>
+                  </select>
                 </div>
               </div>
               <div className="output-item-wide">

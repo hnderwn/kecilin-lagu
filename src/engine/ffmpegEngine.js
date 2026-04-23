@@ -159,7 +159,7 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '16
   ffmpeg.on('progress', progressHandler);
 
   try {
-    const { format, bitrate, metadata, coverFile, stripMetadata, keepLyrics } = options;
+    const { format, bitrate, metadata, coverFile, stripMetadata, keepLyrics, coverMode = 'resample' } = options;
     const ext = file.name.split('.').pop().toLowerCase();
     const inputName = `input_${Math.random().toString(36).substr(2, 5)}.${ext}`;
     const outputName = `output_${Math.random().toString(36).substr(2, 5)}.${format}`;
@@ -222,7 +222,7 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '16
     args.push('-map', '0:a:0'); // Selalu ambil audio asli pertama (mencegah double audio stream)
     if (coverFile) {
       args.push('-map', '1'); // Map cover gambar manual
-    } else if (!stripMetadata && hasOriginalCover) {
+    } else if (!stripMetadata && hasOriginalCover && coverMode !== 'skip') {
       args.push('-map', '0:v:0?'); // Map artwork bawaan pertama jika ada
     }
 
@@ -253,15 +253,21 @@ export const convertAudio = async (file, options = { format: 'm4a', bitrate: '16
     if (brNum >= 320) artSize = 800;
 
     // Untuk memastikan cover art raksasa tidak membocorkan memori WebAssembly atau gagal dikonversi,
-    // kita secara eksplisit menjalankan filter kompresi dan resize gambar menjadi bujursangkar,
-    // baik untuk custom cover maupun cover bawaan (original cover).
+    // kita sediakan opsi Standar (Resample) yang akan merekonstruksi ulang cover dan memaksakan format piksel yang sehat.
     let videoArgs = [];
     const filterArt = `crop='min(iw,ih)':'min(iw,ih)',scale=${artSize}:${artSize}`;
     
     if (coverFile) {
-      videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
+      videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-pix_fmt', 'yuvj420p', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
     } else if (hasOriginalCover && !stripMetadata) {
-      videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
+      if (coverMode === 'skip') {
+        // Jangan beri argumen video codec (stream video map akan diapus via -map if-check di atas)
+      } else if (coverMode === 'copy') {
+        videoArgs = ['-c:v', 'copy', '-disposition:v', 'attached_pic'];
+      } else {
+        // coverMode 'resample' by default (mengamankan transparan PNG dan piksel aneh YUV444p ke standar yuvj420p)
+        videoArgs = ['-vf', filterArt, '-c:v', 'mjpeg', '-pix_fmt', 'yuvj420p', '-q:v', '5', '-disposition:v', 'attached_pic', '-vframes', '1', '-fps_mode', 'vfr'];
+      }
     }
 
     if (format === 'm4a') {
